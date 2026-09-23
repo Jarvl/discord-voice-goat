@@ -108,9 +108,9 @@ describe('playOnce', () => {
     expect(conn.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it('fails and leaves when the connection never becomes ready', async () => {
+  it('fails with a readable timeout and leaves when the connection never becomes ready', async () => {
     const result = await playOnce(fakeBot(voiceChannel()), 'c1', CLIP, FAST);
-    expect(result.status).toBe('failed');
+    expect(result).toMatchObject({ status: 'failed', error: { message: 'voice connection not ready within 50ms' } });
     expect(player.play).not.toHaveBeenCalled();
     expect(conn.destroy).toHaveBeenCalledTimes(1);
   });
@@ -164,6 +164,16 @@ describe('playOnce', () => {
     });
     expect(await playOnce(fakeBot(voiceChannel()), 'c1', CLIP, FAST)).toEqual({ status: 'played' });
     await new Promise((resolve) => setTimeout(resolve, 10)); // let the late error fire
+  });
+
+  it('reports the playback timeout, not an earlier harmless connection error', async () => {
+    later(() => conn.setStatus(VoiceConnectionStatus.Ready));
+    player.play.mockImplementation(() => {
+      player.setStatus(AudioPlayerStatus.Playing);
+      later(() => conn.emit('error', new Error('socket hiccup')));
+    });
+    const result = await playOnce(fakeBot(voiceChannel()), 'c1', CLIP, FAST);
+    expect(result).toMatchObject({ status: 'failed', error: { message: 'playback did not finish within 50ms' } });
   });
 
   it('fails when the bot is disconnected mid-clip', async () => {

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import type { Client } from 'discord.js';
-import { selectFleet, type LoginAttempt } from '../src/fleet.js';
+import { EventEmitter } from 'node:events';
+import { describe, expect, it, vi } from 'vitest';
+import { Events, type Client } from 'discord.js';
+import { loginOne, selectFleet, type LoginAttempt } from '../src/fleet.js';
 
 const GUILD = '111111111111111111';
 
@@ -49,5 +50,39 @@ describe('selectFleet', () => {
 
   it('is fatal with no tokens', () => {
     expect(selectFleet([], GUILD)).toEqual({ fatal: 'no bot tokens were provided' });
+  });
+});
+
+/** Stands in for a discord.js Client: login() resolves, and ClientReady fires only when the test says so. */
+class FakeClient extends EventEmitter {
+  login = vi.fn(async (_token: string) => 'token');
+  destroy = vi.fn(async () => {});
+  isReady(): boolean {
+    return true;
+  }
+}
+
+describe('loginOne', () => {
+  it('reports a readable timeout and destroys the client when it never becomes ready', async () => {
+    const fake = new FakeClient();
+    await expect(loginOne('t', 20, () => fake as unknown as Client)).rejects.toThrow('not ready within 20ms');
+    expect(fake.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('passes a login failure through unchanged and destroys the client', async () => {
+    const fake = new FakeClient();
+    fake.login.mockRejectedValueOnce(new Error('An invalid token was provided.'));
+    await expect(loginOne('t', 1000, () => fake as unknown as Client)).rejects.toThrow('An invalid token was provided.');
+    expect(fake.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('resolves with the client once it is ready', async () => {
+    const fake = new FakeClient();
+    fake.login.mockImplementationOnce(async () => {
+      setTimeout(() => fake.emit(Events.ClientReady, fake), 1);
+      return 'token';
+    });
+    await expect(loginOne('t', 1000, () => fake as unknown as Client)).resolves.toBe(fake);
+    expect(fake.destroy).not.toHaveBeenCalled();
   });
 });

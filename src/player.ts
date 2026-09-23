@@ -72,7 +72,12 @@ export async function playOnce(bot: Bot, channelId: string, clip: Buffer, opts: 
     connection.on('error', (err) => {
       connectionError = err;
     });
-    await entersState(connection, VoiceConnectionStatus.Ready, readyTimeoutMs);
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, readyTimeoutMs);
+    } catch {
+      // entersState reports a timeout as a bare "The operation was aborted"; name what actually failed.
+      throw connectionError ?? new Error(`voice connection not ready within ${readyTimeoutMs}ms`);
+    }
 
     player = createAudioPlayer();
     player.on('error', () => {}); // surfaced by waitForPlaybackEnd; this keeps a late error from crashing
@@ -81,7 +86,7 @@ export async function playOnce(bot: Bot, channelId: string, clip: Buffer, opts: 
     await waitForPlaybackEnd(player, connection, playbackTimeoutMs);
     return { status: 'played' };
   } catch (err) {
-    return { status: 'failed', error: connectionError ?? toError(err) };
+    return { status: 'failed', error: toError(err) };
   } finally {
     player?.stop(true);
     // destroy() throws if the connection was already destroyed (e.g. by shutdown), so check first.

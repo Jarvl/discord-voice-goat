@@ -89,6 +89,7 @@ Run through this with 2–3 bots on a test server after any change to the voice 
 6. Set a user limit on a channel. The extra bots should be skipped cleanly; the logs show `bot.skipped reason="channel is full"`.
 7. Leave the channel mid-swarm. The remaining bots shouldn't join; the logs show `reason="channel has no humans"`.
 8. Redeploy in Dokploy mid-swarm. No bots should be left stuck in the channel.
+9. Listen to the start of each bot's clip. It should play from the very beginning. If the first fraction of a second is cut off, note it: that points to the bots starting audio before Discord's voice encryption has finished setting up.
 
 ## Troubleshooting
 
@@ -96,7 +97,8 @@ Run through this with 2–3 bots on a test server after any change to the voice 
 |---|---|
 | `fleet.bot_dropped … not in server` | That bot was never invited. Run `npm run invite-links` and open its link. |
 | `startup_failed … leader … failed to log in` | The first token in `BOT_TOKENS` is wrong. Reset it on the bot's Developer Portal page. |
+| `startup_failed … exitInSeconds=300` | After any startup failure, the app waits 5 minutes before exiting, so Dokploy's automatic restarts can't use up Discord's daily login limit (1,000 per bot). Fix the cause named in the log, then redeploy; a redeploy stops the waiting app straight away. |
 | `bot.skipped reason="channel is full"` | Raise the channel's user limit, or give the bots the Move Members permission. |
-| `bot.failed … within 10000ms` for every bot | Voice can't connect. Check that the host allows outgoing UDP. |
+| `bot.failed … voice connection not ready within 10000ms` for every bot | Voice can't connect. Check that the host allows outgoing UDP. |
 | Joining voice does nothing | Check that `TRIGGER_USER_IDS` contains your user ID. Only joining from *no* channel triggers it; switching channels doesn't. |
-| `/yo` doesn't appear | Re-invite the leader (the first link from `npm run invite-links`) so it has the slash-command scope, then restart the app. |
+| `/yo` doesn't appear, and the log shows `commands.register_failed` | Re-invite the leader (the first link from `npm run invite-links`) so it has the slash-command scope, then restart the app. Joining voice still triggers the swarm in the meantime. |

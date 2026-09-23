@@ -4,6 +4,7 @@ import { getVoiceConnections, VoiceConnectionStatus } from '@discordjs/voice';
 import { registerYoCommand } from './commands.js';
 import { ConfigError, loadConfig, type Config } from './config.js';
 import { toError } from './errors.js';
+import { exitAfterDelay, FATAL_EXIT_DELAY_MS } from './fatal.js';
 import { startFleet } from './fleet.js';
 import { SwarmGate } from './gate.js';
 import { createLogger } from './log.js';
@@ -66,7 +67,7 @@ async function main(): Promise<void> {
     log,
   });
 
-  await registerYoCommand(leader.client, config.guildId);
+  await registerYoCommand(leader.client, config.guildId, log);
   const detach = attachLeaderHandlers(leader.client, config, swarm, log);
   log.info('ready', { bots: bots.length, leader: leader.name });
 
@@ -90,7 +91,11 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
 }
 
-main().catch((err) => {
-  log.error('startup_failed', { error: toError(err).message });
-  process.exit(1);
-});
+main().catch((err) =>
+  exitAfterDelay(toError(err), {
+    log,
+    delayMs: FATAL_EXIT_DELAY_MS,
+    exit: (code) => process.exit(code),
+    onSignal: (signal, handler) => void process.once(signal, handler),
+  }),
+);

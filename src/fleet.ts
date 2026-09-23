@@ -45,8 +45,12 @@ function createBotClient(): Client {
   });
 }
 
-async function loginOne(token: string, readyTimeoutMs: number): Promise<Client<true>> {
-  const client = createBotClient();
+export async function loginOne(
+  token: string,
+  readyTimeoutMs: number,
+  createClient: () => Client = createBotClient,
+): Promise<Client<true>> {
+  const client = createClient();
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(new Error(`not ready within ${readyTimeoutMs}ms`)), readyTimeoutMs);
   const ready = once(client, Events.ClientReady, { signal: abort.signal });
@@ -58,7 +62,8 @@ async function loginOne(token: string, readyTimeoutMs: number): Promise<Client<t
     return client;
   } catch (err) {
     await client.destroy();
-    throw err;
+    // once() reports our timeout as a bare "The operation was aborted"; throw the reason we gave instead.
+    throw abort.signal.aborted ? (abort.signal.reason as Error) : err;
   } finally {
     clearTimeout(timer);
     abort.abort();
