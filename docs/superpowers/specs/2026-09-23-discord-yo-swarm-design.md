@@ -15,6 +15,7 @@
 
 - `/yo` summons the *whole swarm* into the invoker's current voice channel (same behaviour as the join trigger, on demand).
 - The join trigger fires only for a configured set of user IDs (initially just the owner), not for anyone.
+- **The stagger is on the bots joining, not on the clip.** Each bot joins 1–2 s after the previous one and starts the clip the instant it is connected; there is no added delay between connecting and playing.
 - Each bot leaves immediately after its own clip finishes.
 - The owner supplies the clip, a few seconds long.
 - Runs on the owner's always-on home machine, deployed with Dokploy.
@@ -53,9 +54,9 @@ One Node process in one Docker container runs N `discord.js` clients, one per bo
 | `config.ts` | Parse and validate environment variables into a typed `Config`; report every problem at once. | — |
 | `fleet.ts` | Log in all clients with minimal intents and small caches; drop followers that fail; expose `bots[]`. | config, discord.js |
 | `player.ts` | `playOnce(bot, channelId, clip)`: pre-check → join → play → wait → always disconnect. | @discordjs/voice |
-| `schedule.ts` | Pure: shuffle bots and assign cumulative random start delays. | — |
+| `schedule.ts` | Pure: shuffle bots and assign cumulative random join delays. | — |
 | `gate.ts` | Allow one swarm at a time; enforce cooldown. Clock injected. | — |
-| `swarm.ts` | `launch(channelId)`: acquire gate → build schedule → run players on their timers → release gate when all settle. | schedule, gate, player (injected) |
+| `swarm.ts` | `launch(channelId)`: acquire gate → build schedule → start each bot's join on its timer → release gate when all settle. | schedule, gate, player (injected) |
 | `triggers.ts` | Pure `shouldTrigger(transition, config)` plus thin leader handlers for `voiceStateUpdate` and `/yo`. | swarm |
 | `commands.ts` | Leader registers `/yo` on the guild at startup (idempotent overwrite). | discord.js |
 | `index.ts` | Load the clip into memory, wiring, logging, signal handling. | all |
@@ -81,7 +82,7 @@ function parseTokens(raw: string | undefined): string[];              // trim, d
 // schedule.ts
 function buildSchedule<T>(
   items: T[], minMs: number, maxMs: number, rng: () => number,
-): { item: T; delayMs: number }[];
+): { item: T; joinDelayMs: number }[];
 
 // gate.ts
 type Acquire =
@@ -153,8 +154,8 @@ package.json  tsconfig.json  vitest.config.ts
 1. The owner moves from no voice channel into voice channel C, or someone runs `/yo` while in C.
 2. The leader receives `voiceStateUpdate` (maps it to a `VoiceTransition` and checks `shouldTrigger`) or `interactionCreate` (resolves the invoker's channel).
 3. `swarm.launch(C)` calls `gate.tryAcquire()`. If refused, it returns the refusal right away (`/yo` reports it; the join trigger just logs it).
-4. If acquired: `buildSchedule(bots, min, max, rng)` produces a shuffled list of `{bot, delayMs}`, and a timer is set for each.
-5. When a bot's timer fires, it runs `channelHasHumans(C)` (leader's cache). If no humans remain, the bot is skipped. Otherwise `playOnce(bot, C, clip)` runs.
+4. If acquired: `buildSchedule(bots, min, max, rng)` produces a shuffled list of `{bot, joinDelayMs}`, and a join timer is set for each.
+5. When a bot's join timer fires, the swarm checks `channelHasHumans(C)` (leader's cache). If no humans remain, the bot is skipped. Otherwise `playOnce(bot, C, clip)` runs: the bot joins C, and the clip starts the moment its connection is ready.
 6. When every bot has settled (played, skipped, or failed), the gate is released and the cooldown starts.
 
 ## 5. Behaviour rules
@@ -171,8 +172,8 @@ Returns `true` only when **all** of these hold:
 
 ### 5.2 Swarm playback
 
-- **Schedule.** Bots are shuffled (Fisher–Yates using the injected `rng`). Bot *k*'s delay is the sum of *k + 1* independent draws from `U[staggerMinMs, staggerMaxMs]`, so the first bot starts 1–2 s after the trigger and each later one 1–2 s after the previous. With 10 bots and defaults, the last bot starts roughly 10–20 s after the trigger.
-- **Stagger applies to the start of joining.** Each bot plays the moment its voice connection is ready (typically ~0.5–1 s). That latency is similar for every bot, so the audio spacing tracks the schedule with some natural jitter.
+- **Schedule.** Bots are shuffled (Fisher–Yates using the injected `rng`). Bot *k*'s `joinDelayMs` is the sum of *k + 1* independent draws from `U[staggerMinMs, staggerMaxMs]`, so the first bot joins 1–2 s after the trigger and each later one 1–2 s after the previous. With 10 bots and defaults, the last bot joins roughly 10–20 s after the trigger.
+- **The stagger is on joins, not on the clip.** Each bot begins joining at its scheduled time and starts the clip the instant its voice connection is ready (typically ~0.5–1 s after it begins joining). The clip itself is never delayed. Bots visibly pop into the channel 1–2 s apart, and their clips follow the same rhythm, shifted by connection time and with a little natural jitter.
 - **Leave immediately.** Each bot disconnects as soon as its own clip finishes. Early bots leave while later ones are still arriving (a rolling wave).
 - **Humans check.** Immediately before each bot's turn, if the channel has no non-bot members, that bot is skipped.
 - **Voice options.** Bots join self-deafened (they never receive audio), not self-muted.
@@ -208,8 +209,8 @@ All configuration comes from environment variables. In production they are set i
 | `BOT_TOKENS` | yes | — | Comma-separated bot tokens. The first is the leader. Whitespace is trimmed; empty entries and duplicates are dropped. |
 | `GUILD_ID` | yes | — | The server's ID. |
 | `TRIGGER_USER_IDS` | yes | — | Comma-separated user IDs whose join triggers the swarm. |
-| `STAGGER_MIN_MS` | no | `1000` | Minimum gap between bot starts. |
-| `STAGGER_MAX_MS` | no | `2000` | Maximum gap between bot starts. |
+| `STAGGER_MIN_MS` | no | `1000` | Minimum gap between one bot joining and the next. |
+| `STAGGER_MAX_MS` | no | `2000` | Maximum gap between one bot joining and the next. |
 | `COOLDOWN_MS` | no | `30000` | Cooldown after a swarm finishes. `0` disables it. |
 
 Validation rules:
@@ -278,6 +279,7 @@ Every violation is reported in one error message before the process exits with c
 
   Any failure returns `skipped` with a reason and does not wait on a timeout.
 - **Join** with the bot's own connection group (the bot's user ID) so connections do not collide. Wait up to **10 s** for the Ready state, otherwise return `failed`.
+- **Play immediately on Ready**, with no added delay.
 - **Playback timeout.** Wait for the player to go idle, up to a fixed **30 s** ceiling (clips are expected to be a few seconds), otherwise return `failed`.
 - **Disconnect during playback.** If the connection moves to Disconnected (the bot was kicked, moved, or lost its connection), return `failed`.
 - **Always clean up.** A `finally` block stops the player and destroys the connection whatever the outcome.
@@ -301,8 +303,8 @@ Every violation is reported in one error message before the process exits with c
   - None of these trigger: a channel switch, a mute/deafen toggle in the same channel, leaving, a non-trigger user, a bot, a different guild, the AFK channel, a stage channel.
 - `schedule.test.ts`, with a seeded RNG:
   - Output length equals the input length, and every item appears exactly once.
-  - The first delay and every successive gap fall within `[min, max]`.
-  - Delays are non-decreasing.
+  - The first join delay and every successive gap fall within `[min, max]`.
+  - Join delays are non-decreasing.
   - `min === max` yields exact spacing.
 - `gate.test.ts`, with a fake clock:
   - The first acquire succeeds, and a second while running returns `busy`.
@@ -313,7 +315,7 @@ Every violation is reported in one error message before the process exits with c
   - Tokens are trimmed and deduplicated.
   - Each invalid case (missing required variables, malformed snowflakes, negative numbers, min > max) is reported, and multiple problems are reported together.
 - `swarm.test.ts`, with a fake player and Vitest fake timers:
-  - Each bot is played at its scheduled delay.
+  - Each bot's `play` call (which performs the join) starts at its scheduled `joinDelayMs`.
   - The gate stays busy until every bot settles, then releases, even when some players return `failed`.
   - Bots scheduled after the channel empties are skipped.
   - `cancelAll()` prevents pending bots from playing.
@@ -321,7 +323,7 @@ Every violation is reported in one error message before the process exits with c
 
 **Manual smoke test (README checklist, 2–3 bots on a test server)**
 
-1. Joining a voice channel starts a staggered swarm, and each bot leaves after its clip.
+1. Joining a voice channel starts the swarm. Bots join one at a time, 1–2 s apart; each plays the clip as soon as it connects, then leaves.
 2. Switching channels, and muting/unmuting, do not trigger.
 3. `/yo` while in voice summons the swarm to that channel.
 4. `/yo` while not in voice shows "Join a voice channel first."
