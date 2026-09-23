@@ -1,0 +1,101 @@
+import { fileURLToPath } from 'node:url';
+import { getVoiceConnections, VoiceConnectionStatus } from '@discordjs/voice';
+import { registerCommands } from './commands.js';
+import { ConfigError, loadConfig, type Config } from './config.js';
+import { toError } from './errors.js';
+import { exitAfterDelay, FATAL_EXIT_DELAY_MS } from './fatal.js';
+import { startFleet } from './fleet.js';
+import { SwarmGate } from './gate.js';
+import { createLogger } from './log.js';
+import { playOnce } from './player.js';
+import { loadClips, type SoundName } from './sounds.js';
+import { createSwarm } from './swarm.js';
+import { attachLeaderHandlers, hasHumans } from './triggers.js';
+
+const ASSETS_DIR = fileURLToPath(new URL('../assets/', import.meta.url));
+const SHUTDOWN_TIMEOUT_MS = 5_000;
+
+const log = createLogger();
+
+process.on('unhandledRejection', (reason) => log.error('unhandled_rejection', { error: toError(reason).message }));
+process.on('uncaughtException', (err) => {
+  log.error('uncaught_exception', { error: err.message });
+  process.exit(1);
+});
+
+async function main(): Promise<void> {
+  let config: Config;
+  try {
+    config = loadConfig(process.env);
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  let clips: Record<SoundName, Buffer>;
+  try {
+    clips = await loadClips(ASSETS_DIR);
+  } catch (err) {
+    console.error(toError(err).message);
+    process.exit(1);
+  }
+
+  const bots = await startFleet(config.botTokens, config.guildId, log);
+  const leader = bots[0]!; // startFleet throws unless the leader is usable
+  const fleetIds = new Set(bots.map((bot) => bot.client.user.id));
+
+  const swarm = createSwarm({
+    bots,
+    gate: new SwarmGate(config.cooldownMs),
+    play: (bot, channelId, sound) => playOnce(bot, channelId, clips[sound]),
+    channelHasHumans: (channelId) => {
+      const guild = leader.client.guilds.cache.get(config.guildId);
+      if (!guild) return false;
+      const occupants = [...guild.voiceStates.cache.values()].map((state) => ({
+        userId: state.id,
+        channelId: state.channelId,
+        isBot: state.member?.user.bot,
+      }));
+      return hasHumans(occupants, channelId, fleetIds);
+    },
+    rng: Math.random,
+    staggerMinMs: config.staggerMinMs,
+    staggerMaxMs: config.staggerMaxMs,
+    log,
+  });
+
+  await registerCommands(leader.client, config.guildId, log);
+  const detach = attachLeaderHandlers(leader.client, config, swarm, log);
+  log.info('ready', { bots: bots.length, leader: leader.name });
+
+  let shuttingDown = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log.info('shutdown', { signal });
+    setTimeout(() => process.exit(0), SHUTDOWN_TIMEOUT_MS).unref();
+    detach();
+    swarm.cancelAll();
+    for (const bot of bots) {
+      for (const connection of getVoiceConnections(bot.client.user.id)?.values() ?? []) {
+        if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
+      }
+    }
+    await Promise.allSettled(bots.map((bot) => bot.client.destroy()));
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+}
+
+main().catch((err) =>
+  exitAfterDelay(toError(err), {
+    log,
+    delayMs: FATAL_EXIT_DELAY_MS,
+    exit: (code) => process.exit(code),
+    onSignal: (signal, handler) => void process.once(signal, handler),
+  }),
+);

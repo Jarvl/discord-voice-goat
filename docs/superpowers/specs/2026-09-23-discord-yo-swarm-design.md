@@ -4,6 +4,12 @@
 - **Status:** Draft for review
 - **Repo:** https://github.com/Jarvl/discord-voice-goat
 
+> **Amendment (2026-09-23, after the first implementation):**
+> - `/yo` is replaced by two sound commands: `/yoo` and `/briish`. Each plays its own clip, `assets/<name>.ogg`, and summons the same staggered swarm.
+> - The sounds are listed in `src/sounds.ts`. Both commands share one gate and one cooldown.
+> - `TRIGGER_USER_IDS` is now **optional**. Blank means joining voice never starts a swarm, so only the slash commands do. When it is set, the join trigger plays `yoo`.
+> - Where this spec says `/yo`, read "either sound command".
+
 ## 1. Intent
 
 **Requested**
