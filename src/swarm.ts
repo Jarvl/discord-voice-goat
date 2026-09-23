@@ -2,13 +2,14 @@ import { toError } from './errors.js';
 import type { Acquire, SwarmGate } from './gate.js';
 import type { Logger } from './log.js';
 import { buildSchedule } from './schedule.js';
+import type { SoundName } from './sounds.js';
 import type { PlayResult } from './types.js';
 
 export interface SwarmDeps<B extends { name: string }> {
   bots: readonly B[];
   gate: SwarmGate;
   /** Joins the channel, plays the clip, leaves. Expected never to throw, but a throw is contained. */
-  play: (bot: B, channelId: string) => Promise<PlayResult>;
+  play: (bot: B, channelId: string, sound: SoundName) => Promise<PlayResult>;
   channelHasHumans: (channelId: string) => boolean;
   rng: () => number;
   staggerMinMs: number;
@@ -18,7 +19,7 @@ export interface SwarmDeps<B extends { name: string }> {
 
 export interface Swarm {
   /** Returns immediately; the swarm runs in the background. */
-  launch(channelId: string): Acquire;
+  launch(channelId: string, sound: SoundName): Acquire;
   /** Clears every pending join timer (used on shutdown). */
   cancelAll(): void;
 }
@@ -32,7 +33,7 @@ export function createSwarm<B extends { name: string }>(deps: SwarmDeps<B>): Swa
     else deps.log.error('bot.failed', { bot: bot.name, error: result.error.message });
   }
 
-  function runBot(bot: B, channelId: string, joinDelayMs: number): Promise<void> {
+  function runBot(bot: B, channelId: string, sound: SoundName, joinDelayMs: number): Promise<void> {
     return new Promise<void>((resolve) => {
       const cancel = () => {
         clearTimeout(timer);
@@ -46,7 +47,7 @@ export function createSwarm<B extends { name: string }>(deps: SwarmDeps<B>): Swa
             deps.log.info('bot.skipped', { bot: bot.name, reason: 'channel has no humans' });
             return;
           }
-          logResult(bot, await deps.play(bot, channelId));
+          logResult(bot, await deps.play(bot, channelId, sound));
         } catch (err) {
           deps.log.error('bot.failed', { bot: bot.name, error: toError(err).message });
         } finally {
@@ -58,21 +59,22 @@ export function createSwarm<B extends { name: string }>(deps: SwarmDeps<B>): Swa
   }
 
   return {
-    launch(channelId) {
+    launch(channelId, sound) {
       const acquired = deps.gate.tryAcquire();
       if (!acquired.ok) {
         deps.log.info('swarm.refused', {
           channel: channelId,
+          sound,
           reason: acquired.reason,
           remainingMs: acquired.reason === 'cooldown' ? acquired.remainingMs : undefined,
         });
         return acquired;
       }
       const slots = buildSchedule(deps.bots, deps.staggerMinMs, deps.staggerMaxMs, deps.rng);
-      deps.log.info('swarm.launch', { channel: channelId, bots: slots.length });
-      void Promise.allSettled(slots.map((slot) => runBot(slot.item, channelId, slot.joinDelayMs))).finally(() => {
+      deps.log.info('swarm.launch', { channel: channelId, sound, bots: slots.length });
+      void Promise.allSettled(slots.map((slot) => runBot(slot.item, channelId, sound, slot.joinDelayMs))).finally(() => {
         deps.gate.release();
-        deps.log.info('swarm.done', { channel: channelId });
+        deps.log.info('swarm.done', { channel: channelId, sound });
       });
       return acquired;
     },

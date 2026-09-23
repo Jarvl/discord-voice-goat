@@ -62,8 +62,8 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   if (guildId === '') problems.push('GUILD_ID is required');
   else if (!SNOWFLAKE.test(guildId)) problems.push(`GUILD_ID must be a Discord ID (17-20 digits), got "${guildId}"`);
 
+  // Optional: blank means joining voice never triggers a swarm (slash commands only).
   const triggerUserIds = splitList(env.TRIGGER_USER_IDS);
-  if (triggerUserIds.length === 0) problems.push('TRIGGER_USER_IDS is required (comma-separated Discord user IDs)');
   for (const id of triggerUserIds) {
     if (!SNOWFLAKE.test(id)) problems.push(`TRIGGER_USER_IDS contains "${id}", which is not a Discord ID (17-20 digits)`);
   }

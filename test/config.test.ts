@@ -49,10 +49,13 @@ describe('loadConfig', () => {
 
   it('reports every missing required variable at once', () => {
     const problems = problemsOf({});
-    expect(problems).toHaveLength(3);
+    expect(problems).toHaveLength(2);
     expect(problems[0]).toMatch(/BOT_TOKENS/);
     expect(problems[1]).toMatch(/GUILD_ID/);
-    expect(problems[2]).toMatch(/TRIGGER_USER_IDS/);
+  });
+
+  it.each([undefined, '', '  '])('treats TRIGGER_USER_IDS=%j as no join trigger', (value) => {
+    expect(loadConfig({ ...valid, TRIGGER_USER_IDS: value }).triggerUserIds).toEqual(new Set());
   });
 
   it.each([

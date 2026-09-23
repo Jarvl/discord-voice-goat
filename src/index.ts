@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { getVoiceConnections, VoiceConnectionStatus } from '@discordjs/voice';
-import { registerYoCommand } from './commands.js';
+import { registerCommands } from './commands.js';
 import { ConfigError, loadConfig, type Config } from './config.js';
 import { toError } from './errors.js';
 import { exitAfterDelay, FATAL_EXIT_DELAY_MS } from './fatal.js';
@@ -9,10 +8,11 @@ import { startFleet } from './fleet.js';
 import { SwarmGate } from './gate.js';
 import { createLogger } from './log.js';
 import { playOnce } from './player.js';
+import { loadClips, type SoundName } from './sounds.js';
 import { createSwarm } from './swarm.js';
 import { attachLeaderHandlers, hasHumans } from './triggers.js';
 
-const CLIP_PATH = fileURLToPath(new URL('../assets/yo.ogg', import.meta.url));
+const ASSETS_DIR = fileURLToPath(new URL('../assets/', import.meta.url));
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 const log = createLogger();
@@ -35,11 +35,11 @@ async function main(): Promise<void> {
     throw err;
   }
 
-  let clip: Buffer;
+  let clips: Record<SoundName, Buffer>;
   try {
-    clip = await readFile(CLIP_PATH);
+    clips = await loadClips(ASSETS_DIR);
   } catch (err) {
-    console.error(`Cannot read the sound clip at ${CLIP_PATH}: ${toError(err).message}`);
+    console.error(toError(err).message);
     process.exit(1);
   }
 
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   const swarm = createSwarm({
     bots,
     gate: new SwarmGate(config.cooldownMs),
-    play: (bot, channelId) => playOnce(bot, channelId, clip),
+    play: (bot, channelId, sound) => playOnce(bot, channelId, clips[sound]),
     channelHasHumans: (channelId) => {
       const guild = leader.client.guilds.cache.get(config.guildId);
       if (!guild) return false;
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     log,
   });
 
-  await registerYoCommand(leader.client, config.guildId, log);
+  await registerCommands(leader.client, config.guildId, log);
   const detach = attachLeaderHandlers(leader.client, config, swarm, log);
   log.info('ready', { bots: bots.length, leader: leader.name });
 

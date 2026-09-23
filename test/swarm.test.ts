@@ -16,7 +16,7 @@ function setup(overrides: Partial<SwarmDeps<FakeBot>> = {}) {
   const lines: string[] = [];
   const calls: { bot: string; at: number }[] = [];
   const gate = new SwarmGate(30_000);
-  const play = vi.fn(async (bot: FakeBot, _channelId: string): Promise<PlayResult> => {
+  const play = vi.fn(async (bot: FakeBot, _channelId: string, _sound: string): Promise<PlayResult> => {
     calls.push({ bot: bot.name, at: Date.now() });
     return { status: 'played' };
   });
@@ -45,7 +45,7 @@ afterEach(() => {
 describe('createSwarm', () => {
   it('starts each bot at its scheduled join delay', async () => {
     const { swarm, calls } = setup();
-    expect(swarm.launch('vc1')).toEqual({ ok: true });
+    expect(swarm.launch('vc1', 'yoo')).toEqual({ ok: true });
     await vi.advanceTimersByTimeAsync(999);
     expect(calls).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
@@ -55,17 +55,21 @@ describe('createSwarm', () => {
     expect(calls.map((c) => c.bot).sort()).toEqual(['a', 'b', 'c']);
   });
 
-  it('passes the channel to every play call', async () => {
+  it('passes the channel and the sound to every play call', async () => {
     const { swarm, play } = setup();
-    swarm.launch('vc1');
+    swarm.launch('vc1', 'briish');
     await vi.advanceTimersByTimeAsync(3000);
-    expect(play.mock.calls.map(([, channelId]) => channelId)).toEqual(['vc1', 'vc1', 'vc1']);
+    expect(play.mock.calls.map(([, channelId, sound]) => [channelId, sound])).toEqual([
+      ['vc1', 'briish'],
+      ['vc1', 'briish'],
+      ['vc1', 'briish'],
+    ]);
   });
 
   it('refuses a second launch while one is running', async () => {
     const { swarm, play } = setup();
-    swarm.launch('vc1');
-    expect(swarm.launch('vc2')).toEqual({ ok: false, reason: 'busy' });
+    swarm.launch('vc1', 'yoo');
+    expect(swarm.launch('vc2', 'yoo')).toEqual({ ok: false, reason: 'busy' });
     await vi.advanceTimersByTimeAsync(3000);
     expect(play).toHaveBeenCalledTimes(3);
   });
@@ -79,12 +83,12 @@ describe('createSwarm', () => {
           else resolve({ status: 'played' });
         }),
     });
-    swarm.launch('vc1');
+    swarm.launch('vc1', 'yoo');
     await vi.advanceTimersByTimeAsync(3000);
-    expect(swarm.launch('vc1')).toEqual({ ok: false, reason: 'busy' });
+    expect(swarm.launch('vc1', 'yoo')).toEqual({ ok: false, reason: 'busy' });
     finishLast();
     await flush();
-    expect(swarm.launch('vc1')).toEqual({ ok: false, reason: 'cooldown', remainingMs: 30_000 });
+    expect(swarm.launch('vc1', 'yoo')).toEqual({ ok: false, reason: 'cooldown', remainingMs: 30_000 });
   });
 
   it('releases the gate even when bots fail or throw', async () => {
@@ -97,17 +101,17 @@ describe('createSwarm', () => {
         return { status: 'played' };
       },
     });
-    swarm.launch('vc1');
+    swarm.launch('vc1', 'yoo');
     await vi.advanceTimersByTimeAsync(3000);
     await flush();
-    expect(swarm.launch('vc1')).toMatchObject({ ok: false, reason: 'cooldown' });
+    expect(swarm.launch('vc1', 'yoo')).toMatchObject({ ok: false, reason: 'cooldown' });
     expect(lines.filter((l) => l.includes('bot.failed'))).toHaveLength(2);
   });
 
   it('skips bots whose turn comes after everyone has left the channel', async () => {
     let humans = true;
     const { swarm, play, lines } = setup({ channelHasHumans: () => humans });
-    swarm.launch('vc1');
+    swarm.launch('vc1', 'yoo');
     await vi.advanceTimersByTimeAsync(1000);
     humans = false;
     await vi.advanceTimersByTimeAsync(2000);
@@ -117,21 +121,21 @@ describe('createSwarm', () => {
 
   it('cancelAll stops pending bots and still releases the gate', async () => {
     const { swarm, play } = setup();
-    swarm.launch('vc1');
+    swarm.launch('vc1', 'yoo');
     await vi.advanceTimersByTimeAsync(1000);
     swarm.cancelAll();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(play).toHaveBeenCalledTimes(1);
-    expect(swarm.launch('vc1')).toMatchObject({ ok: false, reason: 'cooldown' });
+    expect(swarm.launch('vc1', 'yoo')).toMatchObject({ ok: false, reason: 'cooldown' });
   });
 
   it('logs a refusal with the remaining cooldown', async () => {
     const { swarm, lines } = setup();
-    swarm.launch('vc1');
+    swarm.launch('vc1', 'yoo');
     await vi.advanceTimersByTimeAsync(3000);
     await flush();
     vi.setSystemTime(5000);
-    expect(swarm.launch('vc1')).toEqual({ ok: false, reason: 'cooldown', remainingMs: 28_000 });
-    expect(lines.at(-1)).toMatch(/swarm\.refused channel=vc1 reason=cooldown remainingMs=28000$/);
+    expect(swarm.launch('vc1', 'yoo')).toEqual({ ok: false, reason: 'cooldown', remainingMs: 28_000 });
+    expect(lines.at(-1)).toMatch(/swarm\.refused channel=vc1 sound=yoo reason=cooldown remainingMs=28000$/);
   });
 });

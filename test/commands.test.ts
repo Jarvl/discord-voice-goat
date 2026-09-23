@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Client } from 'discord.js';
-import { registerYoCommand, YO_COMMAND } from '../src/commands.js';
+import { COMMANDS, registerCommands } from '../src/commands.js';
 import { createLogger } from '../src/log.js';
 
 function capture() {
@@ -12,13 +12,16 @@ function leaderWith(set: () => Promise<unknown>): Client<true> {
   return { guilds: { cache: new Map([['g1', { commands: { set } }]]) } } as unknown as Client<true>;
 }
 
-describe('registerYoCommand', () => {
-  it('overwrites the guild commands with just /yo and returns true', async () => {
+describe('registerCommands', () => {
+  it('overwrites the guild commands with one command per sound and returns true', async () => {
     const set = vi.fn(async () => undefined);
     const { log } = capture();
-    await expect(registerYoCommand(leaderWith(set), 'g1', log)).resolves.toBe(true);
-    expect(set).toHaveBeenCalledWith([{ name: 'yo', description: 'Summon the swarm' }]);
-    expect(YO_COMMAND.name).toBe('yo');
+    await expect(registerCommands(leaderWith(set), 'g1', log)).resolves.toBe(true);
+    expect(set).toHaveBeenCalledWith([
+      { name: 'yoo', description: 'Summon the yoo swarm' },
+      { name: 'briish', description: 'Summon the briish swarm' },
+    ]);
+    expect(COMMANDS.map((c) => c.name)).toEqual(['yoo', 'briish']);
   });
 
   it('returns false and logs an invite hint when Discord refuses the registration', async () => {
@@ -26,7 +29,7 @@ describe('registerYoCommand', () => {
     const leader = leaderWith(async () => {
       throw new Error('Missing Access');
     });
-    await expect(registerYoCommand(leader, 'g1', log)).resolves.toBe(false);
+    await expect(registerCommands(leader, 'g1', log)).resolves.toBe(false);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/error commands\.register_failed error="Missing Access" hint=".*npm run invite-links.*"/);
   });
@@ -34,7 +37,7 @@ describe('registerYoCommand', () => {
   it('returns false and logs when the leader is not in the server', async () => {
     const { lines, log } = capture();
     const leader = { guilds: { cache: new Map() } } as unknown as Client<true>;
-    await expect(registerYoCommand(leader, 'g1', log)).resolves.toBe(false);
+    await expect(registerCommands(leader, 'g1', log)).resolves.toBe(false);
     expect(lines[0]).toMatch(/commands\.register_failed error="leader is not in server g1"/);
   });
 });

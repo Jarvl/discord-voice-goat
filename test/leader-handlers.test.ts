@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChannelType, Events, MessageFlags, type ChatInputCommandInteraction, type Client, type VoiceState } from 'discord.js';
 import type { Acquire } from '../src/gate.js';
 import { createLogger } from '../src/log.js';
-import { attachLeaderHandlers, handleYo, toTransition } from '../src/triggers.js';
+import { attachLeaderHandlers, handleSoundCommand, toTransition } from '../src/triggers.js';
 
 const GUILD = '111111111111111111';
 const OWNER = '222222222222222222';
@@ -20,13 +20,16 @@ function voiceState(channelId: string | null, opts: { type?: ChannelType; bot?: 
   } as unknown as VoiceState;
 }
 
-function yoInteraction(channel: { id: string; type: ChannelType } | null, guildId = GUILD) {
+function commandInteraction(
+  channel: { id: string; type: ChannelType } | null,
+  opts: { commandName?: string; guildId?: string } = {},
+) {
   const reply = vi.fn(async () => undefined);
   const voiceStates = new Map(channel ? [[OWNER, { channel }]] : []);
   const interaction = {
     isChatInputCommand: () => true,
-    commandName: 'yo',
-    guildId,
+    commandName: opts.commandName ?? 'yoo',
+    guildId: opts.guildId ?? GUILD,
     user: { id: OWNER },
     guild: { voiceStates: { cache: voiceStates } },
     reply,
@@ -34,7 +37,8 @@ function yoInteraction(channel: { id: string; type: ChannelType } | null, guildI
   return { interaction, reply };
 }
 
-const swarmReturning = (result: Acquire) => ({ launch: vi.fn((_channelId: string) => result) });
+const swarmReturning = (result: Acquire) => ({ launch: vi.fn((_channelId: string, _sound: string) => result) });
+const VOICE = { id: 'vc1', type: ChannelType.GuildVoice };
 
 describe('toTransition', () => {
   it('maps discord.js voice states to a plain transition', () => {
@@ -54,14 +58,14 @@ describe('toTransition', () => {
   });
 });
 
-describe('handleYo', () => {
+describe('handleSoundCommand', () => {
   it.each<[string, { id: string; type: ChannelType } | null]>([
     ['the caller is not in voice', null],
     ['the caller is in a stage channel', { id: 'stage', type: ChannelType.GuildStageVoice }],
   ])('asks the caller to join voice when %s', async (_label, channel) => {
     const swarm = swarmReturning({ ok: true });
-    const { interaction, reply } = yoInteraction(channel);
-    await handleYo(interaction, swarm, log);
+    const { interaction, reply } = commandInteraction(channel);
+    await handleSoundCommand(interaction, 'yoo', swarm, log);
     expect(swarm.launch).not.toHaveBeenCalled();
     expect(reply).toHaveBeenCalledWith({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
   });
@@ -72,25 +76,25 @@ describe('handleYo', () => {
     ['cooling down', { ok: false, reason: 'cooldown', remainingMs: 12_001 }, 'Swarm is cooling down — try again in 13s.'],
   ])('replies privately when the swarm is %s', async (_label, result, content) => {
     const swarm = swarmReturning(result);
-    const { interaction, reply } = yoInteraction({ id: 'vc1', type: ChannelType.GuildVoice });
-    await handleYo(interaction, swarm, log);
-    expect(swarm.launch).toHaveBeenCalledWith('vc1');
+    const { interaction, reply } = commandInteraction(VOICE);
+    await handleSoundCommand(interaction, 'briish', swarm, log);
+    expect(swarm.launch).toHaveBeenCalledWith('vc1', 'briish');
     expect(reply).toHaveBeenCalledWith({ content, flags: MessageFlags.Ephemeral });
   });
 });
 
 describe('attachLeaderHandlers', () => {
-  function setup() {
+  function setup(cfg = CFG) {
     const leader = new EventEmitter();
     const swarm = swarmReturning({ ok: true });
-    const detach = attachLeaderHandlers(leader as unknown as Client<true>, CFG, swarm, log);
+    const detach = attachLeaderHandlers(leader as unknown as Client<true>, cfg, swarm, log);
     return { leader, swarm, detach };
   }
 
-  it('launches the swarm when the owner joins voice', () => {
+  it('launches a yoo swarm when the owner joins voice', () => {
     const { leader, swarm } = setup();
     leader.emit(Events.VoiceStateUpdate, voiceState(null), voiceState('vc1'));
-    expect(swarm.launch).toHaveBeenCalledWith('vc1');
+    expect(swarm.launch).toHaveBeenCalledWith('vc1', 'yoo');
   });
 
   it('ignores a join by someone else', () => {
@@ -99,14 +103,29 @@ describe('attachLeaderHandlers', () => {
     expect(swarm.launch).not.toHaveBeenCalled();
   });
 
-  it('handles /yo from the configured server and ignores other servers', async () => {
+  it('ignores every join when no trigger users are configured', () => {
+    const { leader, swarm } = setup({ guildId: GUILD, triggerUserIds: new Set() });
+    leader.emit(Events.VoiceStateUpdate, voiceState(null), voiceState('vc1'));
+    expect(swarm.launch).not.toHaveBeenCalled();
+  });
+
+  it.each(['yoo', 'briish'])('routes /%s to its own sound', async (commandName) => {
     const { leader, swarm } = setup();
-    const here = yoInteraction({ id: 'vc1', type: ChannelType.GuildVoice });
-    const elsewhere = yoInteraction({ id: 'vc9', type: ChannelType.GuildVoice }, '444444444444444444');
-    leader.emit(Events.InteractionCreate, here.interaction);
+    const { interaction, reply } = commandInteraction(VOICE, { commandName });
+    leader.emit(Events.InteractionCreate, interaction);
+    await vi.waitFor(() => expect(reply).toHaveBeenCalled());
+    expect(swarm.launch).toHaveBeenCalledWith('vc1', commandName);
+  });
+
+  it('ignores commands that are not sounds, and commands from other servers', async () => {
+    const { leader, swarm } = setup();
+    const unknown = commandInteraction(VOICE, { commandName: 'yo' });
+    const elsewhere = commandInteraction(VOICE, { guildId: '444444444444444444' });
+    leader.emit(Events.InteractionCreate, unknown.interaction);
     leader.emit(Events.InteractionCreate, elsewhere.interaction);
-    await vi.waitFor(() => expect(here.reply).toHaveBeenCalled());
-    expect(swarm.launch).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(swarm.launch).not.toHaveBeenCalled();
+    expect(unknown.reply).not.toHaveBeenCalled();
     expect(elsewhere.reply).not.toHaveBeenCalled();
   });
 
