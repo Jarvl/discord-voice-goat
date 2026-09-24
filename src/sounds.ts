@@ -9,6 +9,10 @@ import { toError } from './errors.js';
 export const SOUNDS = [
   { name: 'yoo', description: 'Summon the yoo swarm' },
   { name: 'briish', description: 'Summon the briish swarm' },
+  { name: 'hewoo-pwincess', description: 'Summon the hewoo-pwincess swarm' },
+  { name: 'geeeey', description: 'Summon the geeeey swarm' },
+  { name: 'lisan-al-gaib', description: 'Summon the lisan-al-gaib swarm' },
+  { name: 'loser', description: 'Summon the loser swarm' },
 ] as const;
 
 export type SoundName = (typeof SOUNDS)[number]['name'];

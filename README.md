@@ -47,6 +47,10 @@ Each slash command plays its own clip from `assets/`:
 |---|---|
 | `/yoo` | `assets/yoo.ogg` |
 | `/briish` | `assets/briish.ogg` |
+| `/hewoo-pwincess` | `assets/hewoo-pwincess.ogg` |
+| `/geeeey` | `assets/geeeey.ogg` |
+| `/lisan-al-gaib` | `assets/lisan-al-gaib.ogg` |
+| `/loser` | `assets/loser.ogg` |
 
 Clips must be **Ogg Opus at 48 kHz**; the bots send them to Discord without re-encoding. An `.ogg` file from the internet is often Ogg *Vorbis*, which won't play. Convert any file with FFmpeg:
 
