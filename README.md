@@ -6,12 +6,12 @@ One Node process runs every bot. The first token is the **leader**: it owns the 
 
 ## 1. Create the bots (one-time)
 
-A Discord bot can only be in one voice channel per server, so every bot in the swarm needs its own application.
+A Discord bot can only be in one voice channel per server, so every bot in the swarm needs its own application. The same bots can serve several servers at once.
 
 1. Go to <https://discord.com/developers/applications>. For each bot, click **New Application**.
 2. On the app's **Bot** page, click **Reset Token** and copy the token. Giving each bot its own name and avatar makes the swarm funnier.
 3. Leave **Presence Intent**, **Server Members Intent** and **Message Content Intent** off. The bots don't need them.
-4. In Discord, turn on **User Settings → Advanced → Developer Mode**. Then right-click your server and choose **Copy Server ID**, and right-click yourself and choose **Copy User ID**.
+4. In Discord, turn on **User Settings → Advanced → Developer Mode**. Then right-click each server you want the swarm in and choose **Copy Server ID**, and right-click yourself and choose **Copy User ID**.
 
 ## 2. Configure
 
@@ -24,7 +24,7 @@ Fill in `.env`. Never commit it; it's git-ignored.
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
 | `BOT_TOKENS` | yes | — | Comma-separated bot tokens. The first is the leader. |
-| `GUILD_ID` | yes | — | Your server's ID. |
+| `GUILD_IDS` | yes | — | Comma-separated server IDs. Each server has its own swarm and cooldown, so swarms in different servers can run at once. The older `GUILD_ID` still works. |
 | `TRIGGER_USER_IDS` | no | blank | Comma-separated user IDs whose voice join starts a `yoo` swarm. Leave it blank to use only the slash commands. |
 | `STAGGER_MIN_MS` | no | `1000` | Minimum gap between one bot joining and the next. |
 | `STAGGER_MAX_MS` | no | `2000` | Maximum gap between one bot joining and the next. |
@@ -37,7 +37,9 @@ npm install
 npm run invite-links
 ```
 
-This prints one invite link per bot. Open each link and add that bot to your server. The leader's link also grants slash commands.
+This prints one invite link per bot. Open each link and add that bot to every server in `GUILD_IDS`. The leader's link also grants slash commands.
+
+The leader must be in a server for it to be served; a server the leader is missing from is skipped with a `fleet.server_skipped` warning. A follower missing from a server just sits out swarms there (`fleet.bot_missing_server`), and joins them once you invite it, without a restart.
 
 ## 4. Sounds
 

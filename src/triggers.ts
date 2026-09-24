@@ -25,9 +25,9 @@ export interface VoiceTransition {
 }
 
 /** True only when a trigger user moves from no voice channel into a regular, non-AFK voice channel. */
-export function shouldTrigger(t: VoiceTransition, cfg: Pick<Config, 'guildId' | 'triggerUserIds'>): boolean {
+export function shouldTrigger(t: VoiceTransition, cfg: Pick<Config, 'guildIds' | 'triggerUserIds'>): boolean {
   return (
-    t.guildId === cfg.guildId &&
+    cfg.guildIds.has(t.guildId) &&
     cfg.triggerUserIds.has(t.userId) &&
     !t.isBot &&
     t.oldChannelId === null &&
@@ -83,30 +83,30 @@ export async function handleSoundCommand(
   if (!channel || channel.type !== ChannelType.GuildVoice) {
     content = REPLIES.notInVoice;
   } else {
-    const result = swarm.launch(channel.id, sound);
+    const result = swarm.launch(channel.guildId, channel.id, sound);
     if (result.ok) content = REPLIES.launched;
     else if (result.reason === 'busy') content = REPLIES.busy;
     else content = REPLIES.cooldown(result.remainingMs);
   }
-  log.info('trigger.command', { command: sound, user: interaction.user.id, channel: channel?.id, reply: content });
+  log.info('trigger.command', { command: sound, server: interaction.guildId ?? undefined, user: interaction.user.id, channel: channel?.id, reply: content });
   await interaction.reply({ content, flags: MessageFlags.Ephemeral });
 }
 
 /** Wires the leader's voice-join and sound-command handlers. Returns a function that removes them. */
 export function attachLeaderHandlers(
   leader: Client<true>,
-  cfg: Pick<Config, 'guildId' | 'triggerUserIds'>,
+  cfg: Pick<Config, 'guildIds' | 'triggerUserIds'>,
   swarm: Pick<Swarm, 'launch'>,
   log: Logger,
 ): () => void {
   const onVoiceStateUpdate = (oldState: VoiceState, newState: VoiceState) => {
     const t = toTransition(oldState, newState);
     if (!shouldTrigger(t, cfg) || t.newChannelId === null) return;
-    log.info('trigger.join', { user: t.userId, channel: t.newChannelId, sound: JOIN_SOUND });
-    swarm.launch(t.newChannelId, JOIN_SOUND);
+    log.info('trigger.join', { server: t.guildId, user: t.userId, channel: t.newChannelId, sound: JOIN_SOUND });
+    swarm.launch(t.guildId, t.newChannelId, JOIN_SOUND);
   };
   const onInteractionCreate = (interaction: Interaction) => {
-    if (!interaction.isChatInputCommand() || interaction.guildId !== cfg.guildId) return;
+    if (!interaction.isChatInputCommand() || interaction.guildId === null || !cfg.guildIds.has(interaction.guildId)) return;
     const sound = findSound(interaction.commandName);
     if (!sound) return;
     handleSoundCommand(interaction, sound, swarm, log).catch((err) =>

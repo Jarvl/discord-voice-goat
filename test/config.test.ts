@@ -4,7 +4,8 @@ import { ConfigError, loadConfig, parseTokens } from '../src/config.js';
 const GUILD = '111111111111111111';
 const USER = '222222222222222222';
 const USER2 = '333333333333333333';
-const valid = { BOT_TOKENS: 'tokA,tokB', GUILD_ID: GUILD, TRIGGER_USER_IDS: USER };
+const GUILD2 = '444444444444444444';
+const valid = { BOT_TOKENS: 'tokA,tokB', GUILD_IDS: GUILD, TRIGGER_USER_IDS: USER };
 
 function problemsOf(env: Record<string, string | undefined>): string[] {
   try {
@@ -20,7 +21,7 @@ describe('loadConfig', () => {
   it('parses a valid environment and applies defaults', () => {
     expect(loadConfig(valid)).toEqual({
       botTokens: ['tokA', 'tokB'],
-      guildId: GUILD,
+      guildIds: new Set([GUILD]),
       triggerUserIds: new Set([USER]),
       staggerMinMs: 1000,
       staggerMaxMs: 2000,
@@ -43,15 +44,20 @@ describe('loadConfig', () => {
     expect(cfg.triggerUserIds).toEqual(new Set([USER, USER2]));
   });
 
-  it('accepts a quoted GUILD_ID', () => {
-    expect(loadConfig({ ...valid, GUILD_ID: `"${GUILD}"` }).guildId).toBe(GUILD);
+  it('parses several server IDs with spaces, quotes and a trailing comma', () => {
+    expect(loadConfig({ ...valid, GUILD_IDS: `"${GUILD}, ${GUILD2},"` }).guildIds).toEqual(new Set([GUILD, GUILD2]));
+  });
+
+  it('still accepts the older GUILD_ID, alone or alongside GUILD_IDS', () => {
+    expect(loadConfig({ ...valid, GUILD_IDS: undefined, GUILD_ID: `"${GUILD}"` }).guildIds).toEqual(new Set([GUILD]));
+    expect(loadConfig({ ...valid, GUILD_ID: `${GUILD2},${GUILD}` }).guildIds).toEqual(new Set([GUILD, GUILD2]));
   });
 
   it('reports every missing required variable at once', () => {
     const problems = problemsOf({});
     expect(problems).toHaveLength(2);
     expect(problems[0]).toMatch(/BOT_TOKENS/);
-    expect(problems[1]).toMatch(/GUILD_ID/);
+    expect(problems[1]).toMatch(/GUILD_IDS/);
   });
 
   it.each([undefined, '', '  '])('treats TRIGGER_USER_IDS=%j as no join trigger', (value) => {
@@ -59,11 +65,12 @@ describe('loadConfig', () => {
   });
 
   it.each([
-    ['GUILD_ID', 'abc'],
-    ['GUILD_ID', '123'],
-    ['TRIGGER_USER_IDS', 'nope'],
-  ])('rejects malformed %s=%s', (name, value) => {
-    expect(problemsOf({ ...valid, [name]: value })).toEqual([expect.stringContaining(name)]);
+    ['GUILD_IDS', 'abc', 'GUILD_IDS'],
+    ['GUILD_IDS', `${GUILD},123`, 'GUILD_IDS'],
+    ['GUILD_ID', '123', 'GUILD_IDS'],
+    ['TRIGGER_USER_IDS', 'nope', 'TRIGGER_USER_IDS'],
+  ])('rejects malformed %s=%s', (name, value, reported) => {
+    expect(problemsOf({ ...valid, [name]: value })).toEqual([expect.stringContaining(reported)]);
   });
 
   it.each(['-1', '1.5', '1s', '1,000', 'abc'])('rejects STAGGER_MIN_MS=%s', (value) => {
@@ -81,8 +88,8 @@ describe('loadConfig', () => {
   });
 
   it('lists each problem in the error message', () => {
-    expect(() => loadConfig({ ...valid, GUILD_ID: 'x', COOLDOWN_MS: 'y' })).toThrow(
-      /Invalid configuration:\n {2}- GUILD_ID.*\n {2}- COOLDOWN_MS/,
+    expect(() => loadConfig({ ...valid, GUILD_IDS: 'x', COOLDOWN_MS: 'y' })).toThrow(
+      /Invalid configuration:\n {2}- GUILD_IDS.*\n {2}- COOLDOWN_MS/,
     );
   });
 });

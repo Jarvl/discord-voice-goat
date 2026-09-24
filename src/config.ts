@@ -1,7 +1,8 @@
 export interface Config {
   /** Bot tokens; index 0 is the leader. */
   botTokens: string[];
-  guildId: string;
+  /** Servers the swarm serves, in the order given. */
+  guildIds: Set<string>;
   triggerUserIds: Set<string>;
   staggerMinMs: number;
   staggerMaxMs: number;
@@ -58,9 +59,12 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     problems.push('BOT_TOKENS is required (comma-separated bot tokens; the first is the leader)');
   }
 
-  const guildId = stripQuotes(env.GUILD_ID?.trim() ?? '');
-  if (guildId === '') problems.push('GUILD_ID is required');
-  else if (!SNOWFLAKE.test(guildId)) problems.push(`GUILD_ID must be a Discord ID (17-20 digits), got "${guildId}"`);
+  // GUILD_ID is the older single-server name; it still works, alone or alongside GUILD_IDS.
+  const guildIds = [...splitList(env.GUILD_IDS), ...splitList(env.GUILD_ID)];
+  if (guildIds.length === 0) problems.push('GUILD_IDS is required (comma-separated server IDs)');
+  for (const id of guildIds) {
+    if (!SNOWFLAKE.test(id)) problems.push(`GUILD_IDS contains "${id}", which is not a Discord ID (17-20 digits)`);
+  }
 
   // Optional: blank means joining voice never triggers a swarm (slash commands only).
   const triggerUserIds = splitList(env.TRIGGER_USER_IDS);
@@ -77,5 +81,5 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   }
 
   if (problems.length > 0) throw new ConfigError(problems);
-  return { botTokens, guildId, triggerUserIds: new Set(triggerUserIds), staggerMinMs, staggerMaxMs, cooldownMs };
+  return { botTokens, guildIds: new Set(guildIds), triggerUserIds: new Set(triggerUserIds), staggerMinMs, staggerMaxMs, cooldownMs };
 }

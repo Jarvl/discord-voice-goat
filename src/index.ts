@@ -43,16 +43,17 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const bots = await startFleet(config.botTokens, config.guildId, log);
+  const { bots, guildIds } = await startFleet(config.botTokens, config.guildIds, log);
   const leader = bots[0]!; // startFleet throws unless the leader is usable
   const fleetIds = new Set(bots.map((bot) => bot.client.user.id));
 
   const swarm = createSwarm({
-    bots,
-    gate: new SwarmGate(config.cooldownMs),
+    // Read live, so a bot invited to a server while running joins its next swarm.
+    botsIn: (guildId) => bots.filter((bot) => bot.client.guilds.cache.has(guildId)),
+    createGate: () => new SwarmGate(config.cooldownMs),
     play: (bot, channelId, sound) => playOnce(bot, channelId, clips[sound]),
-    channelHasHumans: (channelId) => {
-      const guild = leader.client.guilds.cache.get(config.guildId);
+    channelHasHumans: (guildId, channelId) => {
+      const guild = leader.client.guilds.cache.get(guildId);
       if (!guild) return false;
       const occupants = [...guild.voiceStates.cache.values()].map((state) => ({
         userId: state.id,
@@ -67,9 +68,9 @@ async function main(): Promise<void> {
     log,
   });
 
-  await registerCommands(leader.client, config.guildId, log);
-  const detach = attachLeaderHandlers(leader.client, config, swarm, log);
-  log.info('ready', { bots: bots.length, leader: leader.name });
+  await Promise.all(guildIds.map((guildId) => registerCommands(leader.client, guildId, log)));
+  const detach = attachLeaderHandlers(leader.client, { ...config, guildIds: new Set(guildIds) }, swarm, log);
+  log.info('ready', { bots: bots.length, leader: leader.name, servers: guildIds.length });
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {

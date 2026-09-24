@@ -3,7 +3,8 @@ import { hasHumans, shouldTrigger, type VoiceTransition } from '../src/triggers.
 
 const GUILD = '111111111111111111';
 const OWNER = '222222222222222222';
-const CFG = { guildId: GUILD, triggerUserIds: new Set([OWNER]) };
+const GUILD2 = '555555555555555555';
+const CFG = { guildIds: new Set([GUILD, GUILD2]), triggerUserIds: new Set([OWNER]) };
 
 const join: VoiceTransition = {
   guildId: GUILD,
@@ -20,13 +21,17 @@ describe('shouldTrigger', () => {
     expect(shouldTrigger(join, CFG)).toBe(true);
   });
 
+  it('triggers in every configured server', () => {
+    expect(shouldTrigger({ ...join, guildId: GUILD2 }, CFG)).toBe(true);
+  });
+
   it.each<[string, Partial<VoiceTransition>]>([
     ['switching channels', { oldChannelId: 'vc0' }],
     ['mute/deafen/stream toggles in the same channel', { oldChannelId: 'vc1' }],
     ['leaving voice', { oldChannelId: 'vc1', newChannelId: null }],
     ['a user who is not a trigger user', { userId: '999999999999999999' }],
     ['a bot', { isBot: true }],
-    ['a different server', { guildId: '444444444444444444' }],
+    ['a server that is not configured', { guildId: '444444444444444444' }],
     ['joining the AFK channel', { newChannelId: 'afk' }],
     ['joining a stage channel', { newChannelIsVoice: false }],
   ])('does not trigger for %s', (_label, change) => {
