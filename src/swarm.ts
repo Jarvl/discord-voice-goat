@@ -6,11 +6,13 @@ import type { SoundName } from './sounds.js';
 import type { PlayResult } from './types.js';
 
 export interface SwarmDeps<B extends { name: string }> {
-  bots: readonly B[];
-  gate: SwarmGate;
+  /** The bots that are in the server right now. */
+  botsIn: (guildId: string) => readonly B[];
+  /** Called once per server; each server has its own busy flag and cooldown. */
+  createGate: () => SwarmGate;
   /** Joins the channel, plays the clip, leaves. Expected never to throw, but a throw is contained. */
   play: (bot: B, channelId: string, sound: SoundName) => Promise<PlayResult>;
-  channelHasHumans: (channelId: string) => boolean;
+  channelHasHumans: (guildId: string, channelId: string) => boolean;
   rng: () => number;
   staggerMinMs: number;
   staggerMaxMs: number;
@@ -19,13 +21,23 @@ export interface SwarmDeps<B extends { name: string }> {
 
 export interface Swarm {
   /** Returns immediately; the swarm runs in the background. */
-  launch(channelId: string, sound: SoundName): Acquire;
+  launch(guildId: string, channelId: string, sound: SoundName): Acquire;
   /** Clears every pending join timer (used on shutdown). */
   cancelAll(): void;
 }
 
 export function createSwarm<B extends { name: string }>(deps: SwarmDeps<B>): Swarm {
   const pending = new Set<() => void>();
+  const gates = new Map<string, SwarmGate>();
+
+  function gateFor(guildId: string): SwarmGate {
+    let gate = gates.get(guildId);
+    if (!gate) {
+      gate = deps.createGate();
+      gates.set(guildId, gate);
+    }
+    return gate;
+  }
 
   function logResult(bot: B, result: PlayResult): void {
     if (result.status === 'played') deps.log.info('bot.played', { bot: bot.name });
@@ -33,7 +45,7 @@ export function createSwarm<B extends { name: string }>(deps: SwarmDeps<B>): Swa
     else deps.log.error('bot.failed', { bot: bot.name, error: result.error.message });
   }
 
-  function runBot(bot: B, channelId: string, sound: SoundName, joinDelayMs: number): Promise<void> {
+  function runBot(bot: B, guildId: string, channelId: string, sound: SoundName, joinDelayMs: number): Promise<void> {
     return new Promise<void>((resolve) => {
       const cancel = () => {
         clearTimeout(timer);
@@ -43,7 +55,7 @@ export function createSwarm<B extends { name: string }>(deps: SwarmDeps<B>): Swa
       const timer = setTimeout(async () => {
         pending.delete(cancel);
         try {
-          if (!deps.channelHasHumans(channelId)) {
+          if (!deps.channelHasHumans(guildId, channelId)) {
             deps.log.info('bot.skipped', { bot: bot.name, reason: 'channel has no humans' });
             return;
           }
@@ -59,10 +71,12 @@ export function createSwarm<B extends { name: string }>(deps: SwarmDeps<B>): Swa
   }
 
   return {
-    launch(channelId, sound) {
-      const acquired = deps.gate.tryAcquire();
+    launch(guildId, channelId, sound) {
+      const gate = gateFor(guildId);
+      const acquired = gate.tryAcquire();
       if (!acquired.ok) {
         deps.log.info('swarm.refused', {
+          server: guildId,
           channel: channelId,
           sound,
           reason: acquired.reason,
@@ -70,11 +84,11 @@ export function createSwarm<B extends { name: string }>(deps: SwarmDeps<B>): Swa
         });
         return acquired;
       }
-      const slots = buildSchedule(deps.bots, deps.staggerMinMs, deps.staggerMaxMs, deps.rng);
-      deps.log.info('swarm.launch', { channel: channelId, sound, bots: slots.length });
-      void Promise.allSettled(slots.map((slot) => runBot(slot.item, channelId, sound, slot.joinDelayMs))).finally(() => {
-        deps.gate.release();
-        deps.log.info('swarm.done', { channel: channelId, sound });
+      const slots = buildSchedule(deps.botsIn(guildId), deps.staggerMinMs, deps.staggerMaxMs, deps.rng);
+      deps.log.info('swarm.launch', { server: guildId, channel: channelId, sound, bots: slots.length });
+      void Promise.allSettled(slots.map((slot) => runBot(slot.item, guildId, channelId, sound, slot.joinDelayMs))).finally(() => {
+        gate.release();
+        deps.log.info('swarm.done', { server: guildId, channel: channelId, sound });
       });
       return acquired;
     },

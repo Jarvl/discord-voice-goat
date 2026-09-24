@@ -35,13 +35,13 @@ describe('registerCommands', () => {
     });
     await expect(registerCommands(leader, 'g1', log)).resolves.toBe(false);
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/error commands\.register_failed error="Missing Access" hint=".*npm run invite-links.*"/);
+    expect(lines[0]).toMatch(/error commands\.register_failed server=g1 error="Missing Access" hint=".*npm run invite-links.*"/);
   });
 
   it('returns false and logs when the leader is not in the server', async () => {
     const { lines, log } = capture();
     const leader = { guilds: { cache: new Map() } } as unknown as Client<true>;
     await expect(registerCommands(leader, 'g1', log)).resolves.toBe(false);
-    expect(lines[0]).toMatch(/commands\.register_failed error="leader is not in server g1"/);
+    expect(lines[0]).toMatch(/commands\.register_failed server=g1 error="leader is not in server g1"/);
   });
 });

@@ -7,13 +7,17 @@ import { attachLeaderHandlers, handleSoundCommand, toTransition } from '../src/t
 
 const GUILD = '111111111111111111';
 const OWNER = '222222222222222222';
-const CFG = { guildId: GUILD, triggerUserIds: new Set([OWNER]) };
+const GUILD2 = '555555555555555555';
+const CFG = { guildIds: new Set([GUILD, GUILD2]), triggerUserIds: new Set([OWNER]) };
 const log = createLogger(() => {});
 
-function voiceState(channelId: string | null, opts: { type?: ChannelType; bot?: boolean; userId?: string } = {}): VoiceState {
+function voiceState(
+  channelId: string | null,
+  opts: { type?: ChannelType; bot?: boolean; userId?: string; guildId?: string } = {},
+): VoiceState {
   return {
     id: opts.userId ?? OWNER,
-    guild: { id: GUILD, afkChannelId: 'afk' },
+    guild: { id: opts.guildId ?? GUILD, afkChannelId: 'afk' },
     member: { user: { bot: opts.bot ?? false } },
     channelId,
     channel: channelId === null ? null : { id: channelId, type: opts.type ?? ChannelType.GuildVoice },
@@ -25,7 +29,7 @@ function commandInteraction(
   opts: { commandName?: string; guildId?: string } = {},
 ) {
   const reply = vi.fn(async () => undefined);
-  const voiceStates = new Map(channel ? [[OWNER, { channel }]] : []);
+  const voiceStates = new Map(channel ? [[OWNER, { channel: { guildId: opts.guildId ?? GUILD, ...channel } }]] : []);
   const interaction = {
     isChatInputCommand: () => true,
     commandName: opts.commandName ?? 'yoo',
@@ -37,7 +41,7 @@ function commandInteraction(
   return { interaction, reply };
 }
 
-const swarmReturning = (result: Acquire) => ({ launch: vi.fn((_channelId: string, _sound: string) => result) });
+const swarmReturning = (result: Acquire) => ({ launch: vi.fn((_guildId: string, _channelId: string, _sound: string) => result) });
 const VOICE = { id: 'vc1', type: ChannelType.GuildVoice };
 
 describe('toTransition', () => {
@@ -78,7 +82,7 @@ describe('handleSoundCommand', () => {
     const swarm = swarmReturning(result);
     const { interaction, reply } = commandInteraction(VOICE);
     await handleSoundCommand(interaction, 'briish', swarm, log);
-    expect(swarm.launch).toHaveBeenCalledWith('vc1', 'briish');
+    expect(swarm.launch).toHaveBeenCalledWith(GUILD, 'vc1', 'briish');
     expect(reply).toHaveBeenCalledWith({ content, flags: MessageFlags.Ephemeral });
   });
 });
@@ -94,7 +98,13 @@ describe('attachLeaderHandlers', () => {
   it('launches a yoo swarm when the owner joins voice', () => {
     const { leader, swarm } = setup();
     leader.emit(Events.VoiceStateUpdate, voiceState(null), voiceState('vc1'));
-    expect(swarm.launch).toHaveBeenCalledWith('vc1', 'yoo');
+    expect(swarm.launch).toHaveBeenCalledWith(GUILD, 'vc1', 'yoo');
+  });
+
+  it('launches in whichever configured server the owner joins', () => {
+    const { leader, swarm } = setup();
+    leader.emit(Events.VoiceStateUpdate, voiceState(null, { guildId: GUILD2 }), voiceState('vc9', { guildId: GUILD2 }));
+    expect(swarm.launch).toHaveBeenCalledWith(GUILD2, 'vc9', 'yoo');
   });
 
   it('ignores a join by someone else', () => {
@@ -104,7 +114,7 @@ describe('attachLeaderHandlers', () => {
   });
 
   it('ignores every join when no trigger users are configured', () => {
-    const { leader, swarm } = setup({ guildId: GUILD, triggerUserIds: new Set() });
+    const { leader, swarm } = setup({ guildIds: new Set([GUILD]), triggerUserIds: new Set() });
     leader.emit(Events.VoiceStateUpdate, voiceState(null), voiceState('vc1'));
     expect(swarm.launch).not.toHaveBeenCalled();
   });
@@ -114,7 +124,15 @@ describe('attachLeaderHandlers', () => {
     const { interaction, reply } = commandInteraction(VOICE, { commandName });
     leader.emit(Events.InteractionCreate, interaction);
     await vi.waitFor(() => expect(reply).toHaveBeenCalled());
-    expect(swarm.launch).toHaveBeenCalledWith('vc1', commandName);
+    expect(swarm.launch).toHaveBeenCalledWith(GUILD, 'vc1', commandName);
+  });
+
+  it('handles commands from every configured server', async () => {
+    const { leader, swarm } = setup();
+    const { interaction, reply } = commandInteraction(VOICE, { guildId: GUILD2 });
+    leader.emit(Events.InteractionCreate, interaction);
+    await vi.waitFor(() => expect(reply).toHaveBeenCalled());
+    expect(swarm.launch).toHaveBeenCalledWith(GUILD2, 'vc1', 'yoo');
   });
 
   it('ignores commands that are not sounds, and commands from other servers', async () => {

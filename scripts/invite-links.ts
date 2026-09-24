@@ -8,7 +8,7 @@ if (tokens.length === 0) {
   process.exit(1);
 }
 
-console.log('Open each link and add the bot to your server:\n');
+console.log('Open each link and add the bot to every server in GUILD_IDS:\n');
 tokens.forEach((token, i) => {
   const label = i === 0 ? `bot${i + 1} (leader)` : `bot${i + 1}`;
   try {

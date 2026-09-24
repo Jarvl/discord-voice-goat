@@ -10,27 +10,61 @@ export interface LoginAttempt {
   error?: Error;
 }
 
-export type FleetSelection = { fatal: string } | { bots: Bot[]; dropped: { label: string; reason: string }[] };
+export interface FleetGap {
+  label: string;
+  guildId: string;
+}
+
+export type FleetSelection =
+  | { fatal: string }
+  | {
+      bots: Bot[];
+      /** Configured servers the leader is in; only these are served. */
+      guildIds: string[];
+      /** Configured servers the leader is not in. */
+      skippedGuildIds: string[];
+      dropped: { label: string; reason: string }[];
+      /** Kept followers that are missing from some served servers; they sit out swarms there. */
+      gaps: FleetGap[];
+    };
 
 const INVITE_HINT = 'run `npm run invite-links` and add it to the server';
 
-/** Decides which logged-in clients make up the fleet. attempts[0] is the leader. */
-export function selectFleet(attempts: readonly LoginAttempt[], guildId: string): FleetSelection {
+/**
+ * Decides which logged-in clients make up the fleet. attempts[0] is the leader. Only servers the leader is
+ * in are served; a follower is kept if it is in at least one of them.
+ */
+export function selectFleet(attempts: readonly LoginAttempt[], guildIds: Iterable<string>): FleetSelection {
   const [leader, ...followers] = attempts;
   if (!leader) return { fatal: 'no bot tokens were provided' };
   if (!leader.client) return { fatal: `leader (${leader.label}) failed to log in: ${leader.error?.message ?? 'unknown error'}` };
-  if (!leader.client.guilds.cache.has(guildId)) {
-    return { fatal: `leader (${leader.client.user.username}) is not in server ${guildId}; ${INVITE_HINT}` };
+  const leaderClient = leader.client;
+  const configured = [...guildIds];
+  const served = configured.filter((id) => leaderClient.guilds.cache.has(id));
+  const skippedGuildIds = configured.filter((id) => !leaderClient.guilds.cache.has(id));
+  if (served.length === 0) {
+    return { fatal: `leader (${leaderClient.user.username}) is not in any configured server (${configured.join(', ')}); ${INVITE_HINT}` };
   }
 
-  const bots: Bot[] = [{ name: leader.client.user.username, client: leader.client }];
+  const bots: Bot[] = [{ name: leaderClient.user.username, client: leaderClient }];
   const dropped: { label: string; reason: string }[] = [];
+  const gaps: FleetGap[] = [];
   for (const attempt of followers) {
-    if (!attempt.client) dropped.push({ label: attempt.label, reason: `failed to log in: ${attempt.error?.message ?? 'unknown error'}` });
-    else if (!attempt.client.guilds.cache.has(guildId)) dropped.push({ label: attempt.client.user.username, reason: `not in server ${guildId}; ${INVITE_HINT}` });
-    else bots.push({ name: attempt.client.user.username, client: attempt.client });
+    if (!attempt.client) {
+      dropped.push({ label: attempt.label, reason: `failed to log in: ${attempt.error?.message ?? 'unknown error'}` });
+      continue;
+    }
+    const { client } = attempt;
+    const missing = served.filter((id) => !client.guilds.cache.has(id));
+    if (missing.length === served.length) {
+      const where = served.length === 1 ? `server ${served[0]}` : `any served server (${served.join(', ')})`;
+      dropped.push({ label: client.user.username, reason: `not in ${where}; ${INVITE_HINT}` });
+      continue;
+    }
+    bots.push({ name: client.user.username, client });
+    for (const guildId of missing) gaps.push({ label: client.user.username, guildId });
   }
-  return { bots, dropped };
+  return { bots, guildIds: served, skippedGuildIds, dropped, gaps };
 }
 
 function createBotClient(): Client {
@@ -70,8 +104,20 @@ export async function loginOne(
   }
 }
 
+export interface Fleet {
+  /** Leader first. */
+  bots: Bot[];
+  /** Configured servers the leader is in. */
+  guildIds: string[];
+}
+
 /** Logs in every token concurrently. Throws if the leader cannot be used; drops unusable followers. */
-export async function startFleet(tokens: readonly string[], guildId: string, log: Logger, readyTimeoutMs = 30_000): Promise<Bot[]> {
+export async function startFleet(
+  tokens: readonly string[],
+  guildIds: Iterable<string>,
+  log: Logger,
+  readyTimeoutMs = 30_000,
+): Promise<Fleet> {
   const settled = await Promise.allSettled(tokens.map((token) => loginOne(token, readyTimeoutMs)));
   const attempts: LoginAttempt[] = settled.map((result, i) =>
     result.status === 'fulfilled'
@@ -79,12 +125,18 @@ export async function startFleet(tokens: readonly string[], guildId: string, log
       : { label: `bot${i + 1}`, error: toError(result.reason) },
   );
 
-  const selection = selectFleet(attempts, guildId);
+  const selection = selectFleet(attempts, guildIds);
   const kept = new Set('fatal' in selection ? [] : selection.bots.map((bot) => bot.client));
   await Promise.allSettled(attempts.flatMap((a) => (a.client && !kept.has(a.client) ? [a.client.destroy()] : [])));
 
   if ('fatal' in selection) throw new Error(selection.fatal);
+  for (const guildId of selection.skippedGuildIds) {
+    log.warn('fleet.server_skipped', { server: guildId, reason: `leader is not in this server; ${INVITE_HINT}` });
+  }
   for (const { label, reason } of selection.dropped) log.warn('fleet.bot_dropped', { bot: label, reason });
-  log.info('fleet.ready', { bots: selection.bots.length, leader: selection.bots[0]?.name });
-  return selection.bots;
+  for (const { label, guildId } of selection.gaps) {
+    log.warn('fleet.bot_missing_server', { bot: label, server: guildId, hint: INVITE_HINT });
+  }
+  log.info('fleet.ready', { bots: selection.bots.length, leader: selection.bots[0]?.name, servers: selection.guildIds.length });
+  return { bots: selection.bots, guildIds: selection.guildIds };
 }

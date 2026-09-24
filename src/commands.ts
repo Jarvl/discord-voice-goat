@@ -7,7 +7,7 @@ import { SOUNDS } from './sounds.js';
 export const COMMANDS = SOUNDS.map(({ name, description }) => ({ name, description }));
 
 /**
- * Registers the sound commands on one server only (instant, unlike global commands). Overwrites, so it is
+ * Registers the sound commands on one server (instant, unlike global commands); call it once per server. Overwrites, so it is
  * safe on every start and removes commands that no longer exist. A failure is logged, not thrown: the
  * voice-join trigger keeps working without the commands.
  */
@@ -19,6 +19,7 @@ export async function registerCommands(leader: Client<true>, guildId: string, lo
     return true;
   } catch (err) {
     log.error('commands.register_failed', {
+      server: guildId,
       error: toError(err).message,
       hint: 're-invite the leader with the first link from npm run invite-links (it adds the slash-command scope), then restart',
     });
