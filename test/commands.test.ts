@@ -20,8 +20,12 @@ describe('registerCommands', () => {
     expect(set).toHaveBeenCalledWith([
       { name: 'yoo', description: 'Summon the yoo swarm' },
       { name: 'briish', description: 'Summon the briish swarm' },
+      { name: 'hewoo-pwincess', description: 'Summon the hewoo-pwincess swarm' },
+      { name: 'geeeey', description: 'Summon the geeeey swarm' },
+      { name: 'lisan-al-gaib', description: 'Summon the lisan-al-gaib swarm' },
+      { name: 'loser', description: 'Summon the loser swarm' },
     ]);
-    expect(COMMANDS.map((c) => c.name)).toEqual(['yoo', 'briish']);
+    expect(COMMANDS.map((c) => c.name)).toEqual(['yoo', 'briish', 'hewoo-pwincess', 'geeeey', 'lisan-al-gaib', 'loser']);
   });
 
   it('returns false and logs an invite hint when Discord refuses the registration', async () => {
